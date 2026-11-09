@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Kendi adını ve UID'ni buraya yaz (README adım 5)
+    function isAdmin() { return request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID'; }
+    function signedIn() { return request.auth != null; }
+    // Sosyal özellikler yalnızca Google ile giriş yapanlara açık (misafirler giremez)
+    function member()   { return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous'; }
+    function me(uid)    { return signedIn() && request.auth.uid == uid; }
+
+    // Kişisel veriler: yalnızca sahibi
+    match /data/users/{uid}/{doc=**} {
+      allow read, write: if me(uid);
+    }
+
+    // Sosyal profil, bağlantılar, gönderiler, yorumlar: herkes okur, sahibi yazar
+    match /sprofiles/{uid} { allow read: if member(); allow write: if me(uid); }
+    match /slinks/{uid}    { allow read: if member(); allow write: if me(uid); }
+    match /sposts/{uid}    { allow read: if member(); allow write: if me(uid) || isAdmin(); }
+    match /scom/{uid}      { allow read: if member(); allow write: if me(uid) || isAdmin(); }
+
+    // Gruplar: tanım sahibine ait; grup sohbeti ve şifreli fotoğraflar: giriş yapanlar okur, sahibi yazar
+    match /sgroups/{uid} { allow read: if member(); allow write: if me(uid); }
+    match /sgm/{uid}/g/{gid}  { allow read: if member(); allow write: if me(uid); }
+    match /sphoto/{uid}/p/{pid} { allow read: if member(); allow write: if me(uid); }
+
+    // Kullanıcı adı rezervasyonu: başkasının kaydı ezilemez
+    match /shandle/{h} {
+      allow read: if member();
+      allow create, update: if member() && request.resource.data.u == request.auth.uid
+                            && (resource == null || resource.data.u == request.auth.uid);
+      allow delete: if member() && (resource.data.u == request.auth.uid || isAdmin());
+    }
+
+    // Doğrudan mesajlar (uçtan uca şifreli): iki taraf okur, yalnızca gönderen yazar
+    match /sdm/{a}/t/{b} {
+      allow read: if me(a) || me(b);
+      allow write: if me(a);
+    }
+
+    // Yöneticiye mesaj / şikayet: herkes gönderir, yalnızca admin okur
+    match /messages/{uid} {
+      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow read, delete: if isAdmin();
+      match /list/{id} {
+        allow create: if me(uid);
+        allow read, update, delete: if isAdmin();
+      }
+    }
+
+    // Öğretmen/veli paylaşımı: sahibi yazar, yalnızca admin okur
+    match /status/{uid} {
+      allow write: if me(uid);
+      allow read: if isAdmin();
+      match /accs/{acc} {
+        allow write: if me(uid);
+        allow read: if isAdmin();
+      }
+    }
+
+    // aiusage koleksiyonu için kural yok: yalnızca sunucu (Vercel fonksiyonu) yazar, istemci erişemez
+
+    // Canlı odalar
+    match /lobby/{room}/{col}/{id} {
+      allow read: if member();
+      allow write: if member() && (col != 'peers' || id == request.auth.uid);
+    }
+    match /rooms/{room}/{col}/{id} {
+      allow read: if member();
+      allow write: if member() && (col != 'peers' || id == request.auth.uid);
+    }
+  }
+}
